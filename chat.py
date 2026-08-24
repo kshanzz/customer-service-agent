@@ -19,6 +19,7 @@ TERMINAL_STATUSES = {
     "completed",
     "cancelled",
     "rejected",
+    "answered",
 }
 
 

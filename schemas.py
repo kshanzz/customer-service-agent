@@ -54,6 +54,7 @@ class ConversationState(BaseModel):
         "completed",
         "cancelled",
         "rejected",
+        "answered",
     ] = "new"
     assistant_message: str | None = None
     order: OrderRecord | None = None

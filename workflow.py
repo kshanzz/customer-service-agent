@@ -38,11 +38,39 @@ def _ready_message(intent_result: IntentResult) -> str:
     return messages[intent_result.intent]
 
 
+def _logistics_message(order_id: str, order: OrderRecord | None) -> str:
+    """Build a deterministic, read-only logistics response."""
+    if order is None:
+        return f"未查询到订单 {order_id}"
+
+    if order.status == "delivered":
+        if order.days_since_delivery is not None:
+            return f"订单 {order.order_id} 已经签收（{order.days_since_delivery} 天前签收）"
+        return f"订单 {order.order_id} 已经签收"
+
+    if order.status == "shipped":
+        return f"订单 {order.order_id} 正在运输中"
+
+    return f"订单 {order.order_id} 已经取消"
+
+
 def _complete_intent(
     intent_result: IntentResult,
     order_lookup: OrderLookup | None,
     exchange_creator: ExchangeCreator | None,
 ) -> ConversationState:
+    if intent_result.intent == "logistics" and order_lookup is not None:
+        if intent_result.order_id is None:
+            raise ValueError("查询物流前 order_id 不能为空")
+
+        order = order_lookup(intent_result.order_id)
+        return ConversationState(
+            intent_result=intent_result,
+            status="answered",
+            assistant_message=_logistics_message(intent_result.order_id, order),
+            order=order,
+        )
+
     if intent_result.intent != "exchange" or order_lookup is None:
         return ConversationState(
             intent_result=intent_result,
@@ -156,5 +184,8 @@ def process_message(
                 "exchange_request": exchange_request,
             }
         )
+
+    if state.status == "answered":
+        return state.model_copy()
 
     return state.model_copy()
