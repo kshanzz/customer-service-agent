@@ -1,4 +1,7 @@
+import asyncio
+import os
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException
@@ -9,7 +12,16 @@ from interpreter import interpret_intent
 from order_tools import OrderRecord, query_order
 from refund_tools import InMemoryRefundService, RefundRequest
 from schemas import ConversationState, IntentResult
-from session_store import InMemorySessionStore, SessionNotFoundError
+from session_store import (
+    InMemorySessionStore,
+    SessionConcurrencyError,
+    SessionNotFoundError,
+)
+from sqlite_store import (
+    SQLiteExchangeService,
+    SQLiteRefundService,
+    SQLiteSessionStore,
+)
 from workflow import process_message
 
 
@@ -88,31 +100,98 @@ def create_app(
     resolved_interpreter = interpreter if interpreter is not None else interpret_intent
     resolved_order_lookup = order_lookup if order_lookup is not None else query_order
 
+    db_path = os.getenv("AGENT_DB_PATH")
+    using_sqlite = (
+        bool(db_path)
+        and session_store is None
+        and exchange_creator is None
+        and refund_creator is None
+    )
+
+    runtime = {"session_store": session_store, "exchange_creator": None, "refund_creator": None}
+
+    if runtime["session_store"] is None:
+        if using_sqlite:
+            runtime["session_store"] = None
+        else:
+            runtime["session_store"] = InMemorySessionStore()
+
     if exchange_creator is None:
-        exchange_service = InMemoryExchangeService()
-        resolved_exchange_creator = exchange_service.create_request
+        if using_sqlite:
+            runtime["exchange_creator"] = None
+        else:
+            exchange_service = InMemoryExchangeService()
+            runtime["exchange_creator"] = exchange_service.create_request
     else:
-        resolved_exchange_creator = exchange_creator
+        runtime["exchange_creator"] = exchange_creator
 
     if refund_creator is None:
-        refund_service = InMemoryRefundService()
-        resolved_refund_creator = refund_service.create_request
+        if using_sqlite:
+            runtime["refund_creator"] = None
+        else:
+            refund_service = InMemoryRefundService()
+            runtime["refund_creator"] = refund_service.create_request
     else:
-        resolved_refund_creator = refund_creator
+        runtime["refund_creator"] = refund_creator
 
-    resolved_session_store = (
-        session_store if session_store is not None else InMemorySessionStore()
-    )
+    def _ensure_sqlite_resources() -> None:
+        if not using_sqlite:
+            return
+        assert db_path is not None
+        if runtime["session_store"] is None:
+            sqlite_session_store = SQLiteSessionStore(db_path)
+            sqlite_session_store.initialize()
+            runtime["session_store"] = sqlite_session_store
+
+        if runtime["exchange_creator"] is None:
+            exchange_service = SQLiteExchangeService(db_path)
+            exchange_service.initialize()
+            runtime["exchange_creator"] = exchange_service.create_request
+
+        if runtime["refund_creator"] is None:
+            refund_service = SQLiteRefundService(db_path)
+            refund_service.initialize()
+            runtime["refund_creator"] = refund_service.create_request
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        _ensure_sqlite_resources()
+        yield
+
     app = FastAPI(
         title="Customer Service Agent API",
         description=(
-            "Uses in-memory sessions for a single-process demonstration only."
+            "Uses persistent SQLite state when AGENT_DB_PATH is set "
+            "and keeps in-memory fallback otherwise."
         ),
+        lifespan=lifespan,
     )
+    session_locks: dict[str, asyncio.Lock] = {}
+    not_ready_message = "Session store is not initialized"
 
     def get_state(session_id: str) -> ConversationState:
         try:
-            return resolved_session_store.get(session_id)
+            _ensure_sqlite_resources()
+            return runtime["session_store"].get(session_id)  # type: ignore[union-attr]
+        except SessionNotFoundError:
+            raise HTTPException(status_code=404, detail="Session not found") from None
+
+    def get_state_with_version(
+        session_id: str,
+    ) -> tuple[ConversationState, int | None]:
+        store = runtime["session_store"]
+        if store is None:
+            _ensure_sqlite_resources()
+            store = runtime["session_store"]
+            if store is None:
+                raise RuntimeError(not_ready_message)
+        if store is None:
+            raise RuntimeError(not_ready_message)
+        get_with_version = getattr(store, "get_with_version", None)
+        if get_with_version is None:
+            return store.get(session_id), None  # type: ignore[union-attr]
+        try:
+            return get_with_version(session_id)
         except SessionNotFoundError:
             raise HTTPException(status_code=404, detail="Session not found") from None
 
@@ -122,8 +201,11 @@ def create_app(
 
     @app.post("/sessions", response_model=SessionResponse)
     async def create_session() -> SessionResponse:
-        session_id = resolved_session_store.create()
-        return _public_snapshot(session_id, resolved_session_store.get(session_id))
+        _ensure_sqlite_resources()
+        if runtime["session_store"] is None:
+            raise HTTPException(status_code=503, detail="Session store not initialized")
+        session_id = runtime["session_store"].create()  # type: ignore[union-attr]
+        return _public_snapshot(session_id, runtime["session_store"].get(session_id))  # type: ignore[union-attr]
 
     @app.get("/sessions/{session_id}", response_model=SessionResponse)
     async def get_session(session_id: str) -> SessionResponse:
@@ -137,27 +219,42 @@ def create_app(
         session_id: str,
         request: MessageRequest,
     ) -> SessionResponse:
-        state = get_state(session_id)
-        if state.status in TERMINAL_STATUSES:
-            return _public_snapshot(session_id, state)
+        _ensure_sqlite_resources()
+        lock = session_locks.setdefault(session_id, asyncio.Lock())
+        async with lock:
+            state, expected_version = get_state_with_version(session_id)
+            if state.status in TERMINAL_STATUSES:
+                return _public_snapshot(session_id, state)
 
-        try:
-            next_state = process_message(
-                state,
-                request.message,
-                resolved_interpreter,
-                resolved_order_lookup,
-                resolved_exchange_creator,
-                resolved_refund_creator,
-            )
-        except Exception:
-            raise HTTPException(
-                status_code=503,
-                detail="Customer service processing is temporarily unavailable",
-            ) from None
+            try:
+                next_state = process_message(
+                    state,
+                    request.message,
+                    resolved_interpreter,
+                    resolved_order_lookup,
+                    runtime["exchange_creator"],  # type: ignore[arg-type]
+                    runtime["refund_creator"],  # type: ignore[arg-type]
+                )
+            except Exception:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Customer service processing is temporarily unavailable",
+                ) from None
 
-        resolved_session_store.save(session_id, next_state)
-        return _public_snapshot(session_id, next_state)
+            try:
+                if expected_version is None:
+                    runtime["session_store"].save(session_id, next_state)  # type: ignore[union-attr]
+                else:
+                    runtime["session_store"].save(
+                        session_id, next_state, expected_version=expected_version
+                    )  # type: ignore[union-attr]
+            except SessionConcurrencyError:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Session state was updated concurrently",
+                ) from None
+
+            return _public_snapshot(session_id, next_state)
 
     return app
 

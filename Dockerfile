@@ -16,8 +16,12 @@ COPY refund_tools.py ./
 COPY order_tools.py ./
 COPY session_store.py ./
 COPY interpreter.py ./
+COPY sqlite_store.py ./
+
+RUN mkdir -p /data
 
 RUN useradd --create-home --uid 10001 --shell /bin/bash appuser
+RUN chown -R 10001:10001 /data
 USER appuser
 
 EXPOSE 8000

@@ -1,7 +1,26 @@
 # Customer Service Agent
 
 本项目实现了一个支持物流查询、换货/退款确认、会话状态管理的客服 Agent，并通过 FastAPI 暴露 API。  
-当前版本使用**内存会话**，仅适合单进程演示环境（`InMemorySessionStore` 不支持跨进程共享）。
+V10 引入了 SQLite 持久化：会话状态与售后幂等记录可落库，容器重启和镜像更新后不会清空状态（当 `AGENT_DB_PATH` 配置到可持久化目录时）。
+
+## V10 持久化说明
+
+会话与换货/退款申请在以下条件下持久化：
+
+- 设置环境变量 `AGENT_DB_PATH`（例如 `/data/customer-service-agent.db`）时启用 SQLite 持久化。
+- 仍保留原有内存实现用于 CLI、单元测试与向后兼容；当未设置 `AGENT_DB_PATH` 时继续走内存模式。
+- 部署默认使用命名卷挂载到容器内 `/data`，并持久化 `customer-service-agent.db`。
+
+约束说明：
+
+- `AGENT_DB_PATH` 方案仅适合**单服务器、单实例、单 worker**。
+- 容器普通重启或更新不会清理数据。
+- `docker compose down -v` 会删除命名卷及数据库文件，请谨慎使用。
+- 首次部署 V10 时，旧版内存会话不能自动迁移到新数据库；这次升级会导致历史会话在新实例中不可恢复。
+
+示例 `.env` 不应提交，本文不会展示真实 `.env` 内容，仅说明所需字段：
+
+- `AGENT_DB_PATH=/data/customer-service-agent.db`
 
 ## 本地开发与测试
 
@@ -55,8 +74,8 @@ docker pull ghcr.io/<owner>/<repo>:<tag>
 
 ## 会话与安全边界
 
-- 会话状态仅保存在进程内存中。
-- InMemorySessionStore 不支持多进程共享，因此服务必须使用单 worker（`--workers 1`）运行。
+- V10 默认通过 SQLite 持久化会话（当设置 `AGENT_DB_PATH`）或继续使用内存会话（未设置时）。
+- 无论持久化或内存模式，本服务均为单进程、单实例、单 worker 演示定位，不保证跨容器/多实例共享。
 - 任何 `.env` 文件与密钥不会打进镜像或 GitHub Actions 构建参数中。
 
 ## 双开发机场景部署（台式机服务目录）
@@ -104,12 +123,13 @@ chmod 600 .env
 - `BIND_ADDRESS`：默认 `127.0.0.1`，仅本机可访问；如需局域网访问改为 `0.0.0.0`
 - `HOST_PORT`：对外端口
 - `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL`
+- `AGENT_DB_PATH`：SQLite 持久化文件路径，示例 `/data/customer-service-agent.db`
 
 默认仅监听本机回环地址，本地安全；若要开放局域网访问，需要显式设置 `BIND_ADDRESS` 为网卡 IP 或 `0.0.0.0`。
 
 注意：
 
-- 容器为单进程内存会话模式，重启后会话状态会丢失。
+- V10 下，若使用 SQLite 持久化，容器更新不会清理 `customer-service-agent.db`；若环境未设置 `AGENT_DB_PATH`，行为仍为内存模式，重启会丢失会话状态。
 - 如果镜像来自私有 GHCR，需先执行登录：
 
 ```bash
