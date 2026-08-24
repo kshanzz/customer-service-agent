@@ -140,6 +140,7 @@ async def test_create_and_get_session_public_snapshot():
         "order_id",
         "pending_action",
         "request_id",
+        "knowledge_citations",
     }
     assert get_response.json()["status"] == "new"
 
