@@ -8,17 +8,13 @@ from order_tools import (
     check_refund_eligibility,
 )
 from refund_tools import RefundRequest
-from grounded_answer import GroundedAnswer, GroundedAnswerError
-from knowledge import KnowledgeHit
-from schemas import ConversationState, IntentResult, KnowledgeCitation, apply_intent_field_rules
+from schemas import ConversationState, IntentResult, apply_intent_field_rules
 
 
 Interpreter = Callable[[str], IntentResult]
 OrderLookup = Callable[[str], OrderRecord | None]
 ExchangeCreator = Callable[[str, str], ExchangeRequest]
 RefundCreator = Callable[[str, str], RefundRequest]
-KnowledgeSearch = Callable[[str, int], list[KnowledgeHit]]
-KnowledgeAnswerer = Callable[[str, list[KnowledgeHit]], GroundedAnswer]
 
 WAITING_FOR_ORDER_MESSAGE = "请提供订单号"
 CONFIRMATION_MESSAGE = "订单符合换货条件，是否确认创建换货申请？"
@@ -35,7 +31,6 @@ CANCELLATION_MESSAGES = {
     "exchange": "已取消创建换货申请",
     "refund": "已取消创建退款申请",
 }
-KNOWLEDGE_ABSTENTION_MESSAGE = "当前知识库中没有找到足够依据，请换一种方式描述或联系人工客服。"
 
 
 def extract_order_id(message: str) -> str | None:
@@ -79,52 +74,7 @@ def _complete_intent(
     order_lookup: OrderLookup | None,
     exchange_creator: ExchangeCreator | None,
     refund_creator: RefundCreator | None,
-    knowledge_search: KnowledgeSearch | None = None,
-    knowledge_answerer: KnowledgeAnswerer | None = None,
-    user_message: str | None = None,
 ) -> ConversationState:
-    if intent_result.request_kind == "information":
-        if knowledge_search is None or user_message is None:
-            raise RuntimeError("knowledge search is unavailable")
-        hits = knowledge_search(user_message, 3)[:3]
-        if not hits:
-            return ConversationState(
-                intent_result=intent_result,
-                status="answered",
-                assistant_message=KNOWLEDGE_ABSTENTION_MESSAGE,
-            )
-        if knowledge_answerer is None:
-            raise RuntimeError("knowledge answerer is unavailable")
-        grounded = knowledge_answerer(user_message, hits)
-        answer = grounded.answer.strip()
-        citation_ids = grounded.citation_ids
-        valid_ids = {hit.citation_id for hit in hits}
-        if not answer:
-            raise GroundedAnswerError("grounded answer is empty")
-        if not citation_ids:
-            raise GroundedAnswerError("grounded answer has no citations")
-        if len(set(citation_ids)) != len(citation_ids):
-            raise GroundedAnswerError("grounded answer has duplicate citations")
-        if not set(citation_ids).issubset(valid_ids):
-            raise GroundedAnswerError("grounded answer has an unknown citation")
-        citations = [
-            KnowledgeCitation(
-                citation_id=hit.citation_id,
-                title=hit.title,
-                version=hit.version,
-                section=hit.section,
-                source=hit.source,
-            )
-            for hit in hits
-            if hit.citation_id in citation_ids
-        ]
-        return ConversationState(
-            intent_result=intent_result,
-            status="answered",
-            assistant_message=answer,
-            knowledge_citations=citations,
-        )
-
     if intent_result.intent == "logistics" and order_lookup is not None:
         if intent_result.order_id is None:
             raise ValueError("查询物流前 order_id 不能为空")
@@ -193,16 +143,10 @@ def process_message(
     order_lookup: OrderLookup | None = None,
     exchange_creator: ExchangeCreator | None = None,
     refund_creator: RefundCreator | None = None,
-    knowledge_search: KnowledgeSearch | None = None,
-    knowledge_answerer: KnowledgeAnswerer | None = None,
 ) -> ConversationState:
     """Advance the conversation without mutating the input state."""
     if state.status == "new":
-        intent_result = interpreter(user_message)
-        if intent_result.request_kind == "information":
-            intent_result = intent_result.model_copy(update={"missing_information": []})
-        else:
-            intent_result = apply_intent_field_rules(intent_result)
+        intent_result = apply_intent_field_rules(interpreter(user_message))
 
         if intent_result.intent == "unknown":
             return ConversationState(
@@ -223,9 +167,6 @@ def process_message(
             order_lookup,
             exchange_creator,
             refund_creator,
-            knowledge_search,
-            knowledge_answerer,
-            user_message,
         )
 
     if state.status == "waiting_for_information":
@@ -247,9 +188,6 @@ def process_message(
             order_lookup,
             exchange_creator,
             refund_creator,
-            knowledge_search,
-            knowledge_answerer,
-            user_message,
         )
 
     if state.status == "waiting_for_confirmation":
