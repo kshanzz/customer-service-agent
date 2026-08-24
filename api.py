@@ -12,7 +12,7 @@ from exchange_tools import ExchangeRequest, InMemoryExchangeService
 from interpreter import interpret_intent
 from order_tools import OrderRecord, query_order
 from refund_tools import InMemoryRefundService, RefundRequest
-from schemas import ConversationState, IntentResult
+from schemas import ConversationState, IntentResult, KnowledgeCitation
 from session_store import (
     InMemorySessionStore,
     SessionConcurrencyError,
@@ -26,6 +26,7 @@ from sqlite_store import (
 from tracing import run_traced_message, TurnTrace
 from auth import api_key_dependency, resolve_auth_config
 from knowledge import KnowledgeHit, KnowledgeSearchService
+from grounded_answer import GroundedAnswer, answer_question
 
 
 Interpreter = Callable[[str], IntentResult]
@@ -34,6 +35,7 @@ ExchangeCreator = Callable[[str, str], ExchangeRequest]
 RefundCreator = Callable[[str, str], RefundRequest]
 TraceSink = Callable[[TurnTrace], None]
 KnowledgeSearch = Callable[[str, int], list[KnowledgeHit]]
+KnowledgeAnswerer = Callable[[str, list[KnowledgeHit]], GroundedAnswer]
 
 PublicStatus = Literal[
     "new",
@@ -76,6 +78,7 @@ class SessionResponse(BaseModel):
     order_id: str | None
     pending_action: Literal["exchange", "refund"] | None
     request_id: str | None
+    knowledge_citations: list[KnowledgeCitation]
 
 
 class KnowledgeSearchRequest(BaseModel):
@@ -100,6 +103,7 @@ def _public_snapshot(
         order_id=(state.intent_result.order_id if state.intent_result else None),
         pending_action=state.pending_action,
         request_id=request.request_id if request else None,
+        knowledge_citations=state.knowledge_citations,
     )
 
 
@@ -115,6 +119,7 @@ def create_app(
     docs_enabled: bool | None = None,
     cors_origins: str | list[str] | None = None,
     knowledge_search: KnowledgeSearch | None = None,
+    knowledge_answerer: KnowledgeAnswerer | None = None,
 ) -> FastAPI:
     """Create an API with isolated app-level services and injectable tools."""
     resolved_auth_required, resolved_api_key, resolved_docs_enabled, resolved_cors_origins = (
@@ -134,6 +139,8 @@ def create_app(
         knowledge_enabled = True
     knowledge_dir = os.getenv("AGENT_KNOWLEDGE_DIR", "/app/knowledge_docs")
     knowledge_runtime: dict[str, KnowledgeSearch | None] = {"search": knowledge_search}
+    knowledge_error: list[Exception | None] = [None]
+    answerer = knowledge_answerer
     using_sqlite = (
         bool(db_path)
         and session_store is None
@@ -191,11 +198,14 @@ def create_app(
         _ensure_sqlite_resources()
         if knowledge_enabled:
             if not db_path:
-                raise RuntimeError("AGENT_DB_PATH is required when knowledge is enabled")
-            if knowledge_runtime["search"] is None:
-                service = KnowledgeSearchService(db_path, knowledge_dir)
-                service.initialize_and_sync()
-                knowledge_runtime["search"] = service.search
+                knowledge_error[0] = RuntimeError("AGENT_DB_PATH is required when knowledge is enabled")
+            elif knowledge_runtime["search"] is None:
+                try:
+                    service = KnowledgeSearchService(db_path, knowledge_dir)
+                    service.initialize_and_sync()
+                    knowledge_runtime["search"] = service.search
+                except Exception as exc:
+                    knowledge_error[0] = exc
         yield
 
     app = FastAPI(
@@ -254,7 +264,7 @@ def create_app(
     @app.post("/knowledge/search", response_model=KnowledgeSearchResponse, dependencies=[Depends(require_api_key)])
     async def search_knowledge(request: KnowledgeSearchRequest) -> KnowledgeSearchResponse:
         search = knowledge_runtime["search"]
-        if not knowledge_enabled or search is None:
+        if not knowledge_enabled or search is None or knowledge_error[0] is not None:
             raise HTTPException(status_code=503, detail="Knowledge search is unavailable")
         try:
             hits = search(request.query, max(1, min(5, request.top_k)))
@@ -293,6 +303,8 @@ def create_app(
         lock = session_locks.setdefault(session_id, asyncio.Lock())
         async with lock:
             state, expected_version = get_state_with_version(session_id)
+            resolved_knowledge_search = knowledge_runtime["search"]
+            resolved_knowledge_answerer = answerer if answerer is not None else answer_question
             if state.status in TERMINAL_STATUSES:
                 run_traced_message(
                     state,
@@ -302,6 +314,8 @@ def create_app(
                     runtime["exchange_creator"],  # type: ignore[arg-type]
                     runtime["refund_creator"],  # type: ignore[arg-type]
                     trace_sink=trace_sink,
+                    knowledge_search=resolved_knowledge_search,
+                    knowledge_answerer=resolved_knowledge_answerer,
                 )
                 return _public_snapshot(session_id, state)
 
@@ -314,6 +328,8 @@ def create_app(
                     runtime["exchange_creator"],  # type: ignore[arg-type]
                     runtime["refund_creator"],  # type: ignore[arg-type]
                     trace_sink=trace_sink,
+                    knowledge_search=resolved_knowledge_search,
+                    knowledge_answerer=resolved_knowledge_answerer,
                 )
             except Exception:
                 raise HTTPException(

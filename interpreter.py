@@ -20,6 +20,7 @@ SYSTEM_PROMPT = """
 
 请提取：
 - intent
+- request_kind：action 表示用户要执行查询、换货、退款或投诉流程；information 表示用户只咨询政策、条件、期限或状态含义
 - product
 - reason
 - order_id
@@ -27,6 +28,17 @@ SYSTEM_PROMPT = """
 
 如果某个信息没有出现，使用 null。
 如果换货或退款缺少订单号，将 "order_id" 放入 missing_information。
+信息咨询不要求 order_id，且不得把咨询误判为业务操作。
+
+示例：
+- “我要换货” → exchange + action
+- “换货期限多久” → exchange + information
+- “我要退款” → refund + action
+- “退款条件是什么” → refund + information
+- “查询 A1001 的物流” → logistics + action
+- “已签收是什么意思” → logistics + information
+- “我要投诉” → complaint + action
+- “投诉怎么处理” → complaint + information
 
 只输出合法 JSON，不要输出解释。
 
