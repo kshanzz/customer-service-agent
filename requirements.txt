@@ -1,2 +1,4 @@
 pydantic>=2.13,<3
 pytest>=8,<10
+openai
+python-dotenv
