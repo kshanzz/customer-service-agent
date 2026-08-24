@@ -25,6 +25,7 @@ from sqlite_store import (
 )
 from tracing import run_traced_message, TurnTrace
 from auth import api_key_dependency, resolve_auth_config
+from knowledge import KnowledgeHit, KnowledgeSearchService
 
 
 Interpreter = Callable[[str], IntentResult]
@@ -32,6 +33,7 @@ OrderLookup = Callable[[str], OrderRecord | None]
 ExchangeCreator = Callable[[str, str], ExchangeRequest]
 RefundCreator = Callable[[str, str], RefundRequest]
 TraceSink = Callable[[TurnTrace], None]
+KnowledgeSearch = Callable[[str, int], list[KnowledgeHit]]
 
 PublicStatus = Literal[
     "new",
@@ -76,6 +78,15 @@ class SessionResponse(BaseModel):
     request_id: str | None
 
 
+class KnowledgeSearchRequest(BaseModel):
+    query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=500)]
+    top_k: int = 3
+
+
+class KnowledgeSearchResponse(BaseModel):
+    hits: list[KnowledgeHit]
+
+
 def _public_snapshot(
     session_id: str,
     state: ConversationState,
@@ -103,6 +114,7 @@ def create_app(
     api_key: str | None = None,
     docs_enabled: bool | None = None,
     cors_origins: str | list[str] | None = None,
+    knowledge_search: KnowledgeSearch | None = None,
 ) -> FastAPI:
     """Create an API with isolated app-level services and injectable tools."""
     resolved_auth_required, resolved_api_key, resolved_docs_enabled, resolved_cors_origins = (
@@ -117,6 +129,11 @@ def create_app(
     resolved_order_lookup = order_lookup if order_lookup is not None else query_order
 
     db_path = os.getenv("AGENT_DB_PATH")
+    knowledge_enabled = os.getenv("AGENT_KNOWLEDGE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    if knowledge_search is not None:
+        knowledge_enabled = True
+    knowledge_dir = os.getenv("AGENT_KNOWLEDGE_DIR", "/app/knowledge_docs")
+    knowledge_runtime: dict[str, KnowledgeSearch | None] = {"search": knowledge_search}
     using_sqlite = (
         bool(db_path)
         and session_store is None
@@ -172,6 +189,13 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         _ensure_sqlite_resources()
+        if knowledge_enabled:
+            if not db_path:
+                raise RuntimeError("AGENT_DB_PATH is required when knowledge is enabled")
+            if knowledge_runtime["search"] is None:
+                service = KnowledgeSearchService(db_path, knowledge_dir)
+                service.initialize_and_sync()
+                knowledge_runtime["search"] = service.search
         yield
 
     app = FastAPI(
@@ -226,6 +250,19 @@ def create_app(
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.post("/knowledge/search", response_model=KnowledgeSearchResponse, dependencies=[Depends(require_api_key)])
+    async def search_knowledge(request: KnowledgeSearchRequest) -> KnowledgeSearchResponse:
+        search = knowledge_runtime["search"]
+        if not knowledge_enabled or search is None:
+            raise HTTPException(status_code=503, detail="Knowledge search is unavailable")
+        try:
+            hits = search(request.query, max(1, min(5, request.top_k)))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid knowledge search request") from None
+        except Exception:
+            raise HTTPException(status_code=503, detail="Knowledge search is temporarily unavailable") from None
+        return KnowledgeSearchResponse(hits=hits)
 
     @app.post("/sessions", response_model=SessionResponse, dependencies=[Depends(require_api_key)])
     async def create_session() -> SessionResponse:

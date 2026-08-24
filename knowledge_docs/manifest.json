@@ -1,0 +1,8 @@
+{
+  "documents": [
+    {"doc_id": "exchange-demo-policy", "title": "换货演示政策", "version": "1.0", "effective_date": "2026-01-01", "source": "demo://customer-service/exchange", "path": "exchange.md"},
+    {"doc_id": "refund-demo-policy", "title": "退款演示政策", "version": "1.0", "effective_date": "2026-01-01", "source": "demo://customer-service/refund", "path": "refund.md"},
+    {"doc_id": "logistics-status", "title": "物流状态说明", "version": "1.0", "effective_date": "2026-01-01", "source": "demo://customer-service/logistics", "path": "logistics.md"},
+    {"doc_id": "complaint-handling", "title": "投诉处理说明", "version": "1.0", "effective_date": "2026-01-01", "source": "demo://customer-service/complaint", "path": "complaint.md"}
+  ]
+}

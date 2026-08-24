@@ -1,0 +1,14 @@
+[
+  {"case_id":"K01","name":"exchange_deadline","query":"换货期限是多久","answerable":true,"relevant":[{"doc_id":"exchange-demo-policy","section":"演示换货期限"}]},
+  {"case_id":"K02","name":"exchange_not_received","query":"未收货能否换货","answerable":true,"relevant":[{"doc_id":"exchange-demo-policy","section":"演示换货期限"}]},
+  {"case_id":"K03","name":"exchange_synonym","query":"退回换新的时间限制","answerable":true,"relevant":[{"doc_id":"exchange-demo-policy","section":"演示换货期限"}]},
+  {"case_id":"K04","name":"refund_condition","query":"退款需要什么条件","answerable":true,"relevant":[{"doc_id":"refund-demo-policy","section":"演示退款期限与状态"}]},
+  {"case_id":"K05","name":"refund_cancelled","query":"已取消订单可以退款吗","answerable":true,"relevant":[{"doc_id":"refund-demo-policy","section":"演示退款期限与状态"}]},
+  {"case_id":"K06","name":"refund_synonym","query":"退钱时限","answerable":true,"relevant":[{"doc_id":"refund-demo-policy","section":"演示退款期限与状态"}]},
+  {"case_id":"K07","name":"logistics_transit","query":"订单还在路上是什么意思","answerable":true,"relevant":[{"doc_id":"logistics-status","section":"状态含义"}]},
+  {"case_id":"K08","name":"logistics_delivered","query":"已签收状态说明","answerable":true,"relevant":[{"doc_id":"logistics-status","section":"状态含义"}]},
+  {"case_id":"K09","name":"complaint_channel","query":"投诉怎么处理","answerable":true,"relevant":[{"doc_id":"complaint-handling","section":"处理方式"}]},
+  {"case_id":"K10","name":"complaint_synonym","query":"反馈问题转交哪里","answerable":true,"relevant":[{"doc_id":"complaint-handling","section":"处理方式"}]},
+  {"case_id":"K11","name":"short_query","query":"物流","answerable":true,"relevant":[{"doc_id":"logistics-status","section":"状态含义"}]},
+  {"case_id":"K12","name":"irrelevant","query":"天气预报","answerable":false,"relevant":[]}
+]
