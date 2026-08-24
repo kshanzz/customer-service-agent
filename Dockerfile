@@ -9,6 +9,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY api.py ./
+COPY auth.py ./
 COPY workflow.py ./
 COPY schemas.py ./
 COPY exchange_tools.py ./

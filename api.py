@@ -4,7 +4,8 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, StringConstraints
 
 from exchange_tools import ExchangeRequest, InMemoryExchangeService
@@ -23,6 +24,7 @@ from sqlite_store import (
     SQLiteSessionStore,
 )
 from tracing import run_traced_message, TurnTrace
+from auth import api_key_dependency, resolve_auth_config
 
 
 Interpreter = Callable[[str], IntentResult]
@@ -97,8 +99,20 @@ def create_app(
     refund_creator: RefundCreator | None = None,
     session_store: InMemorySessionStore | None = None,
     trace_sink: TraceSink | None = None,
+    auth_required: bool | None = None,
+    api_key: str | None = None,
+    docs_enabled: bool | None = None,
+    cors_origins: str | list[str] | None = None,
 ) -> FastAPI:
     """Create an API with isolated app-level services and injectable tools."""
+    resolved_auth_required, resolved_api_key, resolved_docs_enabled, resolved_cors_origins = (
+        resolve_auth_config(
+            auth_required=auth_required,
+            api_key=api_key,
+            docs_enabled=docs_enabled,
+            cors_origins=cors_origins,
+        )
+    )
     resolved_interpreter = interpreter if interpreter is not None else interpret_intent
     resolved_order_lookup = order_lookup if order_lookup is not None else query_order
 
@@ -167,7 +181,19 @@ def create_app(
             "and keeps in-memory fallback otherwise."
         ),
         lifespan=lifespan,
+        docs_url="/docs" if resolved_docs_enabled else None,
+        redoc_url="/redoc" if resolved_docs_enabled else None,
+        openapi_url="/openapi.json" if resolved_docs_enabled else None,
     )
+    if resolved_cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=resolved_cors_origins,
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Content-Type", "X-API-Key"],
+        )
+    require_api_key = api_key_dependency(resolved_api_key, resolved_auth_required)
     session_locks: dict[str, asyncio.Lock] = {}
     not_ready_message = "Session store is not initialized"
 
@@ -201,7 +227,7 @@ def create_app(
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.post("/sessions", response_model=SessionResponse)
+    @app.post("/sessions", response_model=SessionResponse, dependencies=[Depends(require_api_key)])
     async def create_session() -> SessionResponse:
         _ensure_sqlite_resources()
         if runtime["session_store"] is None:
@@ -209,13 +235,18 @@ def create_app(
         session_id = runtime["session_store"].create()  # type: ignore[union-attr]
         return _public_snapshot(session_id, runtime["session_store"].get(session_id))  # type: ignore[union-attr]
 
-    @app.get("/sessions/{session_id}", response_model=SessionResponse)
+    @app.get(
+        "/sessions/{session_id}",
+        response_model=SessionResponse,
+        dependencies=[Depends(require_api_key)],
+    )
     async def get_session(session_id: str) -> SessionResponse:
         return _public_snapshot(session_id, get_state(session_id))
 
     @app.post(
         "/sessions/{session_id}/messages",
         response_model=SessionResponse,
+        dependencies=[Depends(require_api_key)],
     )
     async def send_message(
         session_id: str,

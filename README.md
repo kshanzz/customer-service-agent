@@ -29,6 +29,28 @@ V11 增加了“确定性对话评测”与“脱敏运行追踪”：请求会�
 python -m pytest -q
 ```
 
+## API 鉴权与安全访问
+
+本地开发默认 `AGENT_AUTH_REQUIRED=false`，保持旧的 CLI、测试和本地调用方式。生产环境应启用鉴权，并使用至少 32 个字符的随机 Key：
+
+```bash
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+```
+
+生产环境配置 `AGENT_AUTH_REQUIRED=true` 和 `AGENT_API_KEY`。当鉴权开启时，Key 缺失、错误或配置为占位符都会导致启动失败或返回通用 `401 Unauthorized`，不会静默降级。`/health` 始终公开；创建、读取会话和发送消息都需要 `X-API-Key`：
+
+```bash
+curl -H 'X-API-Key: YOUR_API_KEY' -X POST http://localhost:8000/sessions
+curl -H 'X-API-Key: YOUR_API_KEY' http://localhost:8000/sessions/SESSION_ID
+curl -H 'Content-Type: application/json' -H 'X-API-Key: YOUR_API_KEY' \
+  -d '{"message":"我要投诉"}' \
+  -X POST http://localhost:8000/sessions/SESSION_ID/messages
+```
+
+在笔记本访问台式机服务前，必须先启用 API Key 鉴权。API Key 在普通 HTTP 中不会加密；非可信网络应使用 TLS、反向代理或加密隧道。不要提交真实密钥。CORS 只限制浏览器跨源访问，不是安全认证机制。
+
+可用 `AGENT_DOCS_ENABLED` 显式控制 `/docs`、`/redoc` 和 `/openapi.json`；鉴权生产模式默认关闭。`AGENT_CORS_ORIGINS` 使用逗号分隔的精确 origin，未配置时不启用 CORS。
+
 ## 对话评测与单元测试的区别
 
 - 单元测试（`pytest`）验证业务函数、状态机分支和并发保存路径。
