@@ -17,6 +17,8 @@ from workflow import (
     RefundCreator,
     ExchangeCreator,
     Interpreter,
+    KnowledgeAnswerer,
+    KnowledgeSearch,
     process_message,
 )
 
@@ -69,6 +71,7 @@ def _sanitize_state(state: ConversationState) -> dict[str, Any]:
         "has_order": state.order is not None,
         "has_exchange_request": state.exchange_request is not None,
         "has_refund_request": state.refund_request is not None,
+        "citation_count": len(state.knowledge_citations),
     }
 
 
@@ -86,6 +89,8 @@ def run_traced_message(
     exchange_creator: ExchangeCreator | None = None,
     refund_creator: RefundCreator | None = None,
     trace_sink: Callable[[TurnTrace], None] | None = None,
+    knowledge_search: KnowledgeSearch | None = None,
+    knowledge_answerer: KnowledgeAnswerer | None = None,
 ) -> tuple[ConversationState, TurnTrace]:
     """Run one turn and return the next state together with a sanitized trace."""
     events: list[TraceEvent] = []
@@ -100,6 +105,30 @@ def run_traced_message(
     wrapped_order_lookup = order_lookup
     wrapped_exchange_creator = exchange_creator
     wrapped_refund_creator = refund_creator
+    wrapped_knowledge_search = knowledge_search
+    wrapped_knowledge_answerer = knowledge_answerer
+
+    if knowledge_search is not None:
+        def _search(query: str, top_k: int) -> Any:
+            try:
+                result = knowledge_search(query, top_k)
+            except Exception as exc:
+                events.append(TraceEvent(event_type="tool_call", component="knowledge_search", outcome=f"error:{type(exc).__name__}"))
+                raise
+            events.append(TraceEvent(event_type="tool_call", component="knowledge_search", outcome=f"success:{len(result)}"))
+            return result
+        wrapped_knowledge_search = _search
+
+    if knowledge_answerer is not None:
+        def _answer(query: str, hits: Any) -> Any:
+            try:
+                result = knowledge_answerer(query, hits)
+            except Exception as exc:
+                events.append(TraceEvent(event_type="tool_call", component="knowledge_answerer", outcome=f"error:{type(exc).__name__}"))
+                raise
+            events.append(TraceEvent(event_type="tool_call", component="knowledge_answerer", outcome="success"))
+            return result
+        wrapped_knowledge_answerer = _answer
 
     if interpreter is not None:
         def _interp(msg: str) -> Any:
@@ -212,6 +241,8 @@ def run_traced_message(
             wrapped_order_lookup,
             wrapped_exchange_creator,
             wrapped_refund_creator,
+            wrapped_knowledge_search,
+            wrapped_knowledge_answerer,
         )
     except Exception as exc:
         success = False
