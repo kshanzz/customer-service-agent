@@ -49,7 +49,7 @@ def test_second_message_completes_order_id():
     assert state.intent_result is not None
     assert state.intent_result.order_id == "A1001"
     assert "order_id" not in state.intent_result.missing_information
-    assert state.assistant_message == "信息已补全，准备查询订单 A1001"
+    assert state.assistant_message == "信息已补全，准备查询订单 A1001 并处理换货"
 
 
 def test_second_message_does_not_call_interpreter_again():
@@ -101,5 +101,5 @@ def test_complete_first_message_is_ready_immediately():
     assert state.status == "ready"
     assert state.intent_result is not None
     assert state.intent_result.order_id == "A1001"
-    assert state.assistant_message == "信息已补全，准备查询订单 A1001"
+    assert state.assistant_message == "信息已补全，准备查询订单 A1001 并处理换货"
     assert interpreter.call_count == 1

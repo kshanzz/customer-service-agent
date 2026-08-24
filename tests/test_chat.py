@@ -31,7 +31,7 @@ def test_two_turn_chat_reaches_ready_without_real_model():
 
     assert assistant_messages == [
         "请提供订单号",
-        "信息已补全，准备查询订单 A1001",
+        "信息已补全，准备查询订单 A1001 并处理换货",
     ]
     assert state.status == "ready"
     assert state.intent_result is not None
@@ -50,6 +50,36 @@ def test_exit_ends_chat_without_calling_interpreter():
 
     assert state.status == "new"
     assert interpreter.call_count == 0
+
+
+def test_unknown_intent_can_be_recognized_again_on_next_chat_turn():
+    user_messages = iter(["帮帮我", "我要投诉客服态度"])
+    assistant_messages: list[str] = []
+    results = iter(
+        [
+            IntentResult(intent="unknown", missing_information=["order_id"]),
+            IntentResult(intent="complaint", missing_information=["order_id"]),
+        ]
+    )
+    call_count = 0
+
+    def interpreter(user_message: str) -> IntentResult:
+        nonlocal call_count
+        call_count += 1
+        return next(results)
+
+    state = run_chat(
+        input_func=lambda: next(user_messages),
+        output_func=assistant_messages.append,
+        interpreter=interpreter,
+    )
+
+    assert state.status == "ready"
+    assert state.intent_result is not None
+    assert state.intent_result.intent == "complaint"
+    assert call_count == 2
+    assert "请重新说明" in assistant_messages[0]
+    assert assistant_messages[1] == "投诉信息已识别，准备转交处理"
 
 
 def test_v2_chat_stops_after_order_is_checked():

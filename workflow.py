@@ -3,7 +3,7 @@ from collections.abc import Callable
 
 from exchange_tools import ExchangeRequest
 from order_tools import OrderRecord, check_exchange_eligibility
-from schemas import ConversationState, IntentResult
+from schemas import ConversationState, IntentResult, apply_intent_field_rules
 
 
 Interpreter = Callable[[str], IntentResult]
@@ -12,6 +12,7 @@ ExchangeCreator = Callable[[str, str], ExchangeRequest]
 
 WAITING_FOR_ORDER_MESSAGE = "请提供订单号"
 CONFIRMATION_MESSAGE = "订单符合换货条件，是否确认创建换货申请？"
+UNKNOWN_INTENT_MESSAGE = "暂时无法识别您的诉求，请重新说明您需要换货、退款、查询物流还是投诉。"
 ORDER_ID_PATTERN = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]\d{4})(?![A-Za-z0-9])")
 CONFIRMATION_RESPONSES = {"确认", "是", "同意", "yes", "y"}
 CANCELLATION_RESPONSES = {"取消", "否", "不同意", "no", "n"}
@@ -26,9 +27,15 @@ def extract_order_id(message: str) -> str | None:
 
 
 def _ready_message(intent_result: IntentResult) -> str:
-    if intent_result.order_id:
-        return f"信息已补全，准备查询订单 {intent_result.order_id}"
-    return "信息已补全，准备处理"
+    messages = {
+        "exchange": f"信息已补全，准备查询订单 {intent_result.order_id} 并处理换货",
+        "refund": f"信息已补全，准备处理订单 {intent_result.order_id} 的退款",
+        "logistics": f"信息已补全，准备查询订单 {intent_result.order_id} 的物流",
+        "complaint": "投诉信息已识别，准备转交处理",
+    }
+    if intent_result.intent == "unknown":
+        return UNKNOWN_INTENT_MESSAGE
+    return messages[intent_result.intent]
 
 
 def _complete_intent(
@@ -84,8 +91,16 @@ def process_message(
 ) -> ConversationState:
     """Advance the conversation without mutating the input state."""
     if state.status == "new":
-        intent_result = interpreter(user_message)
-        if not intent_result.order_id:
+        intent_result = apply_intent_field_rules(interpreter(user_message))
+
+        if intent_result.intent == "unknown":
+            return ConversationState(
+                intent_result=intent_result,
+                status="new",
+                assistant_message=UNKNOWN_INTENT_MESSAGE,
+            )
+
+        if intent_result.missing_information:
             return ConversationState(
                 intent_result=intent_result,
                 status="waiting_for_information",
@@ -105,15 +120,9 @@ def process_message(
             )
 
         intent_result = state.intent_result.model_copy(
-            update={
-                "order_id": order_id,
-                "missing_information": [
-                    field
-                    for field in state.intent_result.missing_information
-                    if field != "order_id"
-                ],
-            }
+            update={"order_id": order_id}
         )
+        intent_result = apply_intent_field_rules(intent_result)
         return _complete_intent(intent_result, order_lookup, exchange_creator)
 
     if state.status == "waiting_for_confirmation":

@@ -22,6 +22,27 @@ class IntentResult(BaseModel):
     missing_information: list[str] = Field(default_factory=list)
 
 
+INTENT_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
+    "exchange": ("order_id",),
+    "refund": ("order_id",),
+    "logistics": ("order_id",),
+    "complaint": (),
+    "unknown": (),
+}
+
+
+def apply_intent_field_rules(intent_result: IntentResult) -> IntentResult:
+    """Return a copy whose missing fields come from deterministic intent rules."""
+    missing_information = [
+        field_name
+        for field_name in INTENT_REQUIRED_FIELDS[intent_result.intent]
+        if not getattr(intent_result, field_name)
+    ]
+    return intent_result.model_copy(
+        update={"missing_information": missing_information}
+    )
+
+
 class ConversationState(BaseModel):
     intent_result: IntentResult | None = None
     status: Literal[
