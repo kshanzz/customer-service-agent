@@ -39,6 +39,8 @@ jobs:
         run: pytest -q
       - name: Run deterministic tracing evals
         run: python -m evals.run
+      - name: Run knowledge retrieval evals
+        run: python -m evals.knowledge_run
 
   build-image:
     needs: [test]
@@ -81,6 +83,9 @@ jobs:
             -e AGENT_AUTH_REQUIRED=true \
             -e AGENT_API_KEY="${TEST_KEY}" \
             -e AGENT_DOCS_ENABLED=false \
+            -e AGENT_DB_PATH=/tmp/knowledge-ci.db \
+            -e AGENT_KNOWLEDGE_ENABLED=true \
+            -e AGENT_KNOWLEDGE_DIR=/app/knowledge_docs \
             customer-service-agent:test
           trap 'docker logs "${CONTAINER_NAME}" >&2 || true; docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true' EXIT
           for i in $(seq 1 15); do
@@ -92,6 +97,10 @@ jobs:
           done
           [[ "$(curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18000/sessions)" == "401" ]]
           [[ "$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "X-API-Key: ${TEST_KEY}" http://127.0.0.1:18000/sessions)" == "200" ]]
+          SEARCH_RESPONSE=$(curl -sS -X POST -H "X-API-Key: ${TEST_KEY}" -H 'Content-Type: application/json' \
+            -d '{"query":"换货期限","top_k":3}' http://127.0.0.1:18000/knowledge/search)
+          echo "${SEARCH_RESPONSE}" | grep -q '"hits"'
+          echo "${SEARCH_RESPONSE}" | grep -q '"citation_id"'
           echo "Authenticated smoke test passed"
         shell: bash
 

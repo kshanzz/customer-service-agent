@@ -19,6 +19,8 @@ COPY session_store.py ./
 COPY interpreter.py ./
 COPY sqlite_store.py ./
 COPY tracing.py ./
+COPY knowledge/ ./knowledge/
+COPY knowledge_docs/ ./knowledge_docs/
 
 RUN mkdir -p /data
 
