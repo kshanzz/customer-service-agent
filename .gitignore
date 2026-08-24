@@ -7,3 +7,4 @@ deploy/.env
 *.db
 *.db-wal
 *.db-shm
+eval-reports/
