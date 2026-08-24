@@ -1,4 +1,7 @@
 from collections.abc import Callable
+from importlib import reload
+from fastapi import FastAPI
+import sys
 
 import httpx
 import pytest
@@ -65,6 +68,21 @@ class FailingTool:
     def __call__(self, *args):
         self.calls.append(args)
         raise AssertionError("终态或健康检查不应调用工具")
+
+
+async def test_default_api_app_importable_without_llm_key(monkeypatch):
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    api_module = sys.modules.get("api")
+    assert api_module is not None
+    reloaded = reload(api_module)
+
+    assert isinstance(reloaded.app, FastAPI)
+    client = make_client(reloaded.app)
+
+    response = await client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
 
 
 async def create_session(client: httpx.AsyncClient) -> str:

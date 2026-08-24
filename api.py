@@ -160,3 +160,6 @@ def create_app(
         return _public_snapshot(session_id, next_state)
 
     return app
+
+
+app = create_app()
