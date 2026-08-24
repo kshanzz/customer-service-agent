@@ -2,6 +2,8 @@ from collections.abc import Callable
 from importlib import reload
 from fastapi import FastAPI
 import sys
+import logging
+import json
 
 import httpx
 import pytest
@@ -473,3 +475,72 @@ async def test_interpreter_failure_records_trace_and_keeps_state():
     assert after.json() == first.json()
     assert captured
     assert not captured[-1].success  # type: ignore[attr-defined]
+
+
+async def test_default_trace_sink_logs_agent_trace_json_for_successful_message(caplog):
+    client = make_client(create_app(interpreter=SequenceInterpreter(IntentResult(intent="complaint"))))
+    session_id = await create_session(client)
+
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        response = await client.post(
+            f"/sessions/{session_id}/messages",
+            json={"message": "我要投诉"},
+        )
+
+    assert response.status_code == 200
+    matches = [
+        record
+        for record in caplog.records
+        if isinstance(record.getMessage(), str) and record.getMessage().startswith("agent_trace=")
+    ]
+    assert matches
+    payload_line = matches[-1].getMessage()
+    payload_json = json.loads(payload_line.removeprefix("agent_trace="))
+
+    assert payload_json["success"] is True
+    assert "turn_id" in payload_json
+    assert "state_before" in payload_json
+    assert "state_after" in payload_json
+    assert "我要投诉" not in payload_line
+    assert "A1001" not in payload_line
+    assert "EX-" not in payload_line
+    assert "RF-" not in payload_line
+    assert "reason" not in payload_line
+    assert "request_id" not in payload_line
+
+
+async def test_default_trace_sink_logs_failure_trace_for_failed_message(caplog):
+    client = make_client(
+        create_app(
+            interpreter=SequenceInterpreter(
+                IntentResult(intent="unknown"),
+                RuntimeError("interpreter failed"),
+            )
+        )
+    )
+    session_id = await create_session(client)
+    _ = await client.post(
+        f"/sessions/{session_id}/messages",
+        json={"message": "第一次"},
+    )
+
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        response = await client.post(
+            f"/sessions/{session_id}/messages",
+            json={"message": "再试一次"},
+        )
+
+    assert response.status_code == 503
+    matches = [
+        record
+        for record in caplog.records
+        if isinstance(record.getMessage(), str) and record.getMessage().startswith("agent_trace=")
+    ]
+    assert matches
+    payload_line = matches[-1].getMessage()
+    payload_json = json.loads(payload_line.removeprefix("agent_trace="))
+
+    assert payload_json["success"] is False
+    assert payload_json["turn_id"]
+    assert payload_json["state_before"]
+    assert payload_json["state_after"]

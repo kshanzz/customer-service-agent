@@ -65,7 +65,6 @@ def _sanitize_state(state: ConversationState) -> dict[str, Any]:
         },
         "status": state.status,
         "assistant_message": _redact_text(state.assistant_message),
-        "eligibility_reason": _redact_text(state.eligibility_reason),
         "pending_action": state.pending_action,
         "has_order": state.order is not None,
         "has_exchange_request": state.exchange_request is not None,
@@ -74,8 +73,9 @@ def _sanitize_state(state: ConversationState) -> dict[str, Any]:
 
 
 def _default_trace_sink(trace: TurnTrace) -> None:
-    logging.getLogger(__name__).info(
-        json.dumps(trace.model_dump(exclude_none=True))
+    logging.getLogger("uvicorn.error").info(
+        "agent_trace=%s",
+        json.dumps(trace.model_dump(exclude_none=True), ensure_ascii=False),
     )
 
 def run_traced_message(
