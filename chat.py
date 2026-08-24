@@ -3,6 +3,7 @@ from collections.abc import Callable
 from exchange_tools import ExchangeRequest, InMemoryExchangeService
 from interpreter import interpret_intent
 from order_tools import OrderRecord, query_order
+from refund_tools import InMemoryRefundService, RefundRequest
 from schemas import ConversationState, IntentResult
 from workflow import process_message
 
@@ -12,6 +13,7 @@ OutputFunction = Callable[[str], None]
 Interpreter = Callable[[str], IntentResult]
 OrderLookup = Callable[[str], OrderRecord | None]
 ExchangeCreator = Callable[[str, str], ExchangeRequest]
+RefundCreator = Callable[[str, str], RefundRequest]
 
 TERMINAL_STATUSES = {
     "ready",
@@ -29,6 +31,7 @@ def run_chat(
     interpreter: Interpreter = interpret_intent,
     order_lookup: OrderLookup | None = None,
     exchange_creator: ExchangeCreator | None = None,
+    refund_creator: RefundCreator | None = None,
 ) -> ConversationState:
     """Run one conversation and return its final state."""
     state = ConversationState()
@@ -44,6 +47,7 @@ def run_chat(
             interpreter,
             order_lookup,
             exchange_creator,
+            refund_creator,
         )
         if state.assistant_message is not None:
             output_func(state.assistant_message)
@@ -56,7 +60,9 @@ if __name__ == "__main__":
 
     load_dotenv(override=False)
     exchange_service = InMemoryExchangeService()
+    refund_service = InMemoryRefundService()
     run_chat(
         order_lookup=query_order,
         exchange_creator=exchange_service.create_request,
+        refund_creator=refund_service.create_request,
     )

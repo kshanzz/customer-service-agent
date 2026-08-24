@@ -2,20 +2,35 @@ import re
 from collections.abc import Callable
 
 from exchange_tools import ExchangeRequest
-from order_tools import OrderRecord, check_exchange_eligibility
+from order_tools import (
+    OrderRecord,
+    check_exchange_eligibility,
+    check_refund_eligibility,
+)
+from refund_tools import RefundRequest
 from schemas import ConversationState, IntentResult, apply_intent_field_rules
 
 
 Interpreter = Callable[[str], IntentResult]
 OrderLookup = Callable[[str], OrderRecord | None]
 ExchangeCreator = Callable[[str, str], ExchangeRequest]
+RefundCreator = Callable[[str, str], RefundRequest]
 
 WAITING_FOR_ORDER_MESSAGE = "请提供订单号"
 CONFIRMATION_MESSAGE = "订单符合换货条件，是否确认创建换货申请？"
+REFUND_CONFIRMATION_MESSAGE = "订单符合退款条件，是否确认创建退款申请？"
 UNKNOWN_INTENT_MESSAGE = "暂时无法识别您的诉求，请重新说明您需要换货、退款、查询物流还是投诉。"
 ORDER_ID_PATTERN = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]\d{4})(?![A-Za-z0-9])")
 CONFIRMATION_RESPONSES = {"确认", "是", "同意", "yes", "y"}
 CANCELLATION_RESPONSES = {"取消", "否", "不同意", "no", "n"}
+CONFIRMATION_MESSAGES = {
+    "exchange": CONFIRMATION_MESSAGE,
+    "refund": REFUND_CONFIRMATION_MESSAGE,
+}
+CANCELLATION_MESSAGES = {
+    "exchange": "已取消创建换货申请",
+    "refund": "已取消创建退款申请",
+}
 
 
 def extract_order_id(message: str) -> str | None:
@@ -58,6 +73,7 @@ def _complete_intent(
     intent_result: IntentResult,
     order_lookup: OrderLookup | None,
     exchange_creator: ExchangeCreator | None,
+    refund_creator: RefundCreator | None,
 ) -> ConversationState:
     if intent_result.intent == "logistics" and order_lookup is not None:
         if intent_result.order_id is None:
@@ -71,7 +87,10 @@ def _complete_intent(
             order=order,
         )
 
-    if intent_result.intent != "exchange" or order_lookup is None:
+    if (
+        intent_result.intent not in {"exchange", "refund"}
+        or order_lookup is None
+    ):
         return ConversationState(
             intent_result=intent_result,
             status="ready",
@@ -91,14 +110,21 @@ def _complete_intent(
             eligibility_reason=reason,
         )
 
-    eligibility = check_exchange_eligibility(order)
-    if eligibility.eligible and exchange_creator is not None:
+    if intent_result.intent == "exchange":
+        eligibility = check_exchange_eligibility(order)
+        creator = exchange_creator
+    else:
+        eligibility = check_refund_eligibility(order)
+        creator = refund_creator
+
+    if eligibility.eligible and creator is not None:
         return ConversationState(
             intent_result=intent_result,
             status="waiting_for_confirmation",
-            assistant_message=CONFIRMATION_MESSAGE,
+            assistant_message=CONFIRMATION_MESSAGES[intent_result.intent],
             order=order,
             eligibility_reason=eligibility.reason,
+            pending_action=intent_result.intent,
         )
 
     return ConversationState(
@@ -116,6 +142,7 @@ def process_message(
     interpreter: Interpreter,
     order_lookup: OrderLookup | None = None,
     exchange_creator: ExchangeCreator | None = None,
+    refund_creator: RefundCreator | None = None,
 ) -> ConversationState:
     """Advance the conversation without mutating the input state."""
     if state.status == "new":
@@ -135,7 +162,12 @@ def process_message(
                 assistant_message=WAITING_FOR_ORDER_MESSAGE,
             )
 
-        return _complete_intent(intent_result, order_lookup, exchange_creator)
+        return _complete_intent(
+            intent_result,
+            order_lookup,
+            exchange_creator,
+            refund_creator,
+        )
 
     if state.status == "waiting_for_information":
         if state.intent_result is None:
@@ -151,37 +183,70 @@ def process_message(
             update={"order_id": order_id}
         )
         intent_result = apply_intent_field_rules(intent_result)
-        return _complete_intent(intent_result, order_lookup, exchange_creator)
+        return _complete_intent(
+            intent_result,
+            order_lookup,
+            exchange_creator,
+            refund_creator,
+        )
 
     if state.status == "waiting_for_confirmation":
+        if state.pending_action is None:
+            raise ValueError("等待确认时 pending_action 不能为空")
+
+        pending_action = state.pending_action
         response = user_message.strip().lower()
         if response in CANCELLATION_RESPONSES:
             return state.model_copy(
                 update={
                     "status": "cancelled",
-                    "assistant_message": "已取消创建换货申请",
+                    "assistant_message": CANCELLATION_MESSAGES[pending_action],
+                    "pending_action": None,
                 }
             )
 
         if response not in CONFIRMATION_RESPONSES:
-            return state.model_copy(update={"assistant_message": CONFIRMATION_MESSAGE})
+            return state.model_copy(
+                update={"assistant_message": CONFIRMATION_MESSAGES[pending_action]}
+            )
 
-        if exchange_creator is None:
-            raise RuntimeError("确认创建换货申请时必须提供 exchange_creator")
         if state.intent_result is None or state.intent_result.order_id is None:
-            raise ValueError("创建换货申请前 order_id 不能为空")
+            raise ValueError("创建售后申请前 order_id 不能为空")
 
-        exchange_request = exchange_creator(
+        if pending_action == "exchange":
+            if exchange_creator is None:
+                raise RuntimeError("确认创建换货申请时必须提供 exchange_creator")
+
+            exchange_request = exchange_creator(
+                state.intent_result.order_id,
+                state.intent_result.reason or "用户申请换货",
+            )
+            return state.model_copy(
+                update={
+                    "status": "completed",
+                    "assistant_message": (
+                        f"换货申请已创建，申请编号 {exchange_request.request_id}"
+                    ),
+                    "pending_action": None,
+                    "exchange_request": exchange_request,
+                }
+            )
+
+        if refund_creator is None:
+            raise RuntimeError("确认创建退款申请时必须提供 refund_creator")
+
+        refund_request = refund_creator(
             state.intent_result.order_id,
-            state.intent_result.reason or "用户申请换货",
+            state.intent_result.reason or "用户申请退款",
         )
         return state.model_copy(
             update={
                 "status": "completed",
                 "assistant_message": (
-                    f"换货申请已创建，申请编号 {exchange_request.request_id}"
+                    f"退款申请已创建，申请编号 {refund_request.request_id}"
                 ),
-                "exchange_request": exchange_request,
+                "pending_action": None,
+                "refund_request": refund_request,
             }
         )
 

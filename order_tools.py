@@ -15,6 +15,11 @@ class ExchangeEligibility(BaseModel):
     reason: str
 
 
+class RefundEligibility(BaseModel):
+    eligible: bool
+    reason: str
+
+
 _ORDERS = {
     "A1001": OrderRecord(
         order_id="A1001",
@@ -70,4 +75,34 @@ def check_exchange_eligibility(order: OrderRecord) -> ExchangeEligibility:
     return ExchangeEligibility(
         eligible=True,
         reason=f"已收货 {order.days_since_delivery} 天，符合演示换货条件",
+    )
+
+
+def check_refund_eligibility(order: OrderRecord) -> RefundEligibility:
+    """Apply the deterministic V6 demonstration refund policy."""
+    if order.status != "delivered":
+        reason = (
+            "订单已经取消，不符合演示退款条件"
+            if order.status == "cancelled"
+            else "订单尚未收货，不符合演示退款条件"
+        )
+        return RefundEligibility(eligible=False, reason=reason)
+
+    if order.days_since_delivery is None:
+        return RefundEligibility(
+            eligible=False,
+            reason="订单缺少收货时间，无法确认演示退款资格",
+        )
+
+    if order.days_since_delivery > 7:
+        return RefundEligibility(
+            eligible=False,
+            reason=(
+                f"已收货 {order.days_since_delivery} 天，超过 7 天演示退款期限"
+            ),
+        )
+
+    return RefundEligibility(
+        eligible=True,
+        reason=f"已收货 {order.days_since_delivery} 天，符合演示退款条件",
     )

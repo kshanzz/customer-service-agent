@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 from exchange_tools import ExchangeRequest
 from order_tools import OrderRecord
+from refund_tools import RefundRequest
 
 
 class IntentResult(BaseModel):
@@ -59,4 +60,6 @@ class ConversationState(BaseModel):
     assistant_message: str | None = None
     order: OrderRecord | None = None
     eligibility_reason: str | None = None
+    pending_action: Literal["exchange", "refund"] | None = None
     exchange_request: ExchangeRequest | None = None
+    refund_request: RefundRequest | None = None
