@@ -22,13 +22,14 @@ from sqlite_store import (
     SQLiteRefundService,
     SQLiteSessionStore,
 )
-from workflow import process_message
+from tracing import run_traced_message, TurnTrace
 
 
 Interpreter = Callable[[str], IntentResult]
 OrderLookup = Callable[[str], OrderRecord | None]
 ExchangeCreator = Callable[[str, str], ExchangeRequest]
 RefundCreator = Callable[[str, str], RefundRequest]
+TraceSink = Callable[[TurnTrace], None]
 
 PublicStatus = Literal[
     "new",
@@ -95,6 +96,7 @@ def create_app(
     exchange_creator: ExchangeCreator | None = None,
     refund_creator: RefundCreator | None = None,
     session_store: InMemorySessionStore | None = None,
+    trace_sink: TraceSink | None = None,
 ) -> FastAPI:
     """Create an API with isolated app-level services and injectable tools."""
     resolved_interpreter = interpreter if interpreter is not None else interpret_intent
@@ -224,16 +226,26 @@ def create_app(
         async with lock:
             state, expected_version = get_state_with_version(session_id)
             if state.status in TERMINAL_STATUSES:
-                return _public_snapshot(session_id, state)
-
-            try:
-                next_state = process_message(
+                run_traced_message(
                     state,
                     request.message,
                     resolved_interpreter,
                     resolved_order_lookup,
                     runtime["exchange_creator"],  # type: ignore[arg-type]
                     runtime["refund_creator"],  # type: ignore[arg-type]
+                    trace_sink=trace_sink,
+                )
+                return _public_snapshot(session_id, state)
+
+            try:
+                next_state, _ = run_traced_message(
+                    state,
+                    request.message,
+                    resolved_interpreter,
+                    resolved_order_lookup,
+                    runtime["exchange_creator"],  # type: ignore[arg-type]
+                    runtime["refund_creator"],  # type: ignore[arg-type]
+                    trace_sink=trace_sink,
                 )
             except Exception:
                 raise HTTPException(

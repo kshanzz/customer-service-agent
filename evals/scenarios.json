@@ -1,0 +1,260 @@
+[
+  {
+    "name": "exchange_missing_order_then_fill_and_confirm_completed",
+    "turns": [
+      "我要换货",
+      "订单号是 A1001",
+      "确认"
+    ],
+    "interpreter_intents": [
+      {"intent": "exchange", "reason": "耳机故障"}
+    ],
+    "orders": {
+      "A1001": {"product": "耳机", "status": "delivered", "days_since_delivery": 3}
+    },
+    "expectations": {
+      "final_status": "completed",
+      "final_intent": "exchange",
+      "final_has_order": true,
+      "final_has_exchange_request": true,
+      "final_has_refund_request": false,
+      "interpreter_calls": 1,
+      "tool_calls": {
+        "order_lookup": 1,
+        "exchange_creator": 1,
+        "refund_creator": 0
+      }
+    }
+  },
+  {
+    "name": "exchange_eligible_then_cancelled_without_creator",
+    "turns": [
+      "我要换货",
+      "A1001",
+      "取消"
+    ],
+    "interpreter_intents": [
+      {"intent": "exchange", "reason": "耳机故障"}
+    ],
+    "orders": {
+      "A1001": {"product": "耳机", "status": "delivered", "days_since_delivery": 3}
+    },
+    "expectations": {
+      "final_status": "cancelled",
+      "final_intent": "exchange",
+      "final_has_order": true,
+      "final_has_exchange_request": false,
+      "final_has_refund_request": false,
+      "interpreter_calls": 1,
+      "tool_calls": {
+        "order_lookup": 1,
+        "exchange_creator": 0,
+        "refund_creator": 0
+      }
+    }
+  },
+  {
+    "name": "exchange_ineligible_rejected",
+    "turns": [
+      "我要换货 A1001"
+    ],
+    "interpreter_intents": [
+      {"intent": "exchange", "order_id": "B2048", "reason": "不喜欢"}
+    ],
+    "orders": {
+      "B2048": {"product": "键盘", "status": "delivered", "days_since_delivery": 15}
+    },
+    "expectations": {
+      "final_status": "rejected",
+      "final_intent": "exchange",
+      "final_has_order": true,
+      "final_has_exchange_request": false,
+      "final_has_refund_request": false,
+      "interpreter_calls": 1,
+      "tool_calls": {
+        "order_lookup": 1,
+        "exchange_creator": 0,
+        "refund_creator": 0
+      }
+    }
+  },
+  {
+    "name": "refund_confirmation_completed_only_refund_creator",
+    "turns": [
+      "我要退款",
+      "订单号是 A1001",
+      "确认"
+    ],
+    "interpreter_intents": [
+      {"intent": "refund", "reason": "退货"}
+    ],
+    "orders": {
+      "A1001": {"product": "耳机", "status": "delivered", "days_since_delivery": 3}
+    },
+    "expectations": {
+      "final_status": "completed",
+      "final_intent": "refund",
+      "final_has_order": true,
+      "final_has_exchange_request": false,
+      "final_has_refund_request": true,
+      "interpreter_calls": 1,
+      "tool_calls": {
+        "order_lookup": 1,
+        "exchange_creator": 0,
+        "refund_creator": 1
+      }
+    }
+  },
+  {
+    "name": "refund_eligible_then_cancelled",
+    "turns": [
+      "我要退款",
+      "订单号是 A1001",
+      "取消"
+    ],
+    "interpreter_intents": [
+      {"intent": "refund", "reason": "退货"}
+    ],
+    "orders": {
+      "A1001": {"product": "耳机", "status": "delivered", "days_since_delivery": 3}
+    },
+    "expectations": {
+      "final_status": "cancelled",
+      "final_intent": "refund",
+      "final_has_order": true,
+      "final_has_exchange_request": false,
+      "final_has_refund_request": false,
+      "interpreter_calls": 1,
+      "tool_calls": {
+        "order_lookup": 1,
+        "exchange_creator": 0,
+        "refund_creator": 0
+      }
+    }
+  },
+  {
+    "name": "logistics_query_answered_order_lookup_only",
+    "turns": [
+      "查询订单 A1001 的物流"
+    ],
+    "interpreter_intents": [
+      {"intent": "logistics", "order_id": "A1001"}
+    ],
+    "orders": {
+      "A1001": {"product": "耳机", "status": "shipped", "days_since_delivery": null}
+    },
+    "expectations": {
+      "final_status": "answered",
+      "final_intent": "logistics",
+      "final_has_order": true,
+      "final_has_exchange_request": false,
+      "final_has_refund_request": false,
+      "interpreter_calls": 1,
+      "tool_calls": {
+        "order_lookup": 1,
+        "exchange_creator": 0,
+        "refund_creator": 0
+      }
+    }
+  },
+  {
+    "name": "complaint_ready_no_tools",
+    "turns": [
+      "我要投诉"
+    ],
+    "interpreter_intents": [
+      {"intent": "complaint"}
+    ],
+    "orders": {},
+    "expectations": {
+      "final_status": "ready",
+      "final_intent": "complaint",
+      "final_has_order": false,
+      "final_has_exchange_request": false,
+      "final_has_refund_request": false,
+      "interpreter_calls": 1,
+      "tool_calls": {
+        "order_lookup": 0,
+        "exchange_creator": 0,
+        "refund_creator": 0
+      }
+    }
+  },
+  {
+    "name": "unknown_then_restate_calls_interpreter_again",
+    "turns": [
+      "你到底什么意思",
+      "我要投诉"
+    ],
+    "interpreter_intents": [
+      {"intent": "unknown"},
+      {"intent": "complaint"}
+    ],
+    "orders": {},
+    "expectations": {
+      "final_status": "ready",
+      "final_intent": "complaint",
+      "final_has_order": false,
+      "final_has_exchange_request": false,
+      "final_has_refund_request": false,
+      "interpreter_calls": 2,
+      "tool_calls": {
+        "order_lookup": 0,
+        "exchange_creator": 0,
+        "refund_creator": 0
+      }
+    }
+  },
+  {
+    "name": "invalid_order_id_stays_waiting_then_completes_with_valid",
+    "turns": [
+      "我要换货",
+      "订单号是 XYZ",
+      "订单号是 A1001",
+      "确认"
+    ],
+    "interpreter_intents": [
+      {"intent": "exchange", "reason": "耳机故障"}
+    ],
+    "orders": {
+      "A1001": {"product": "耳机", "status": "delivered", "days_since_delivery": 3}
+    },
+    "expectations": {
+      "final_status": "completed",
+      "final_intent": "exchange",
+      "final_has_order": true,
+      "final_has_exchange_request": true,
+      "final_has_refund_request": false,
+      "interpreter_calls": 1,
+      "tool_calls": {
+        "order_lookup": 1,
+        "exchange_creator": 1,
+        "refund_creator": 0
+      }
+    }
+  },
+  {
+    "name": "unknown_order_enters_rejected_state",
+    "turns": [
+      "我要换货",
+      "订单号是 Z9999"
+    ],
+    "interpreter_intents": [
+      {"intent": "exchange", "reason": "耳机故障"}
+    ],
+    "orders": {},
+    "expectations": {
+      "final_status": "rejected",
+      "final_intent": "exchange",
+      "final_has_order": false,
+      "final_has_exchange_request": false,
+      "final_has_refund_request": false,
+      "interpreter_calls": 1,
+      "tool_calls": {
+        "order_lookup": 1,
+        "exchange_creator": 0,
+        "refund_creator": 0
+      }
+    }
+  }
+]

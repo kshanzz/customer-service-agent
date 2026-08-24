@@ -17,6 +17,7 @@ COPY order_tools.py ./
 COPY session_store.py ./
 COPY interpreter.py ./
 COPY sqlite_store.py ./
+COPY tracing.py ./
 
 RUN mkdir -p /data
 

@@ -417,3 +417,59 @@ async def test_terminal_session_does_not_repeat_any_tool(status):
     assert lookup.calls == []
     assert exchange_creator.calls == []
     assert refund_creator.calls == []
+
+
+async def test_trace_sink_exception_does_not_break_message_processing():
+    captured: list[object] = []
+
+    def sink(trace: object) -> None:
+        captured.append(trace)
+        raise RuntimeError("trace sink broken")
+
+    client = make_client(
+        create_app(
+            interpreter=SequenceInterpreter(IntentResult(intent="complaint")),
+            trace_sink=sink,
+        )
+    )
+    session_id = await create_session(client)
+
+    response = await client.post(
+        f"/sessions/{session_id}/messages",
+        json={"message": "我要投诉"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
+    assert captured
+
+
+async def test_interpreter_failure_records_trace_and_keeps_state():
+    captured: list[object] = []
+
+    def sink(trace: object) -> None:
+        captured.append(trace)
+
+    interpreter = SequenceInterpreter(
+        IntentResult(intent="unknown"),
+        RuntimeError("llm failed"),
+    )
+    store = InMemorySessionStore()
+    client = make_client(
+        create_app(interpreter=interpreter, session_store=store, trace_sink=sink)
+    )
+    session_id = await create_session(client)
+    first = await client.post(
+        f"/sessions/{session_id}/messages",
+        json={"message": "帮帮我"},
+    )
+    failed = await client.post(
+        f"/sessions/{session_id}/messages",
+        json={"message": "再试一次"},
+    )
+    after = await client.get(f"/sessions/{session_id}")
+
+    assert failed.status_code == 503
+    assert after.json() == first.json()
+    assert captured
+    assert not captured[-1].success  # type: ignore[attr-defined]
