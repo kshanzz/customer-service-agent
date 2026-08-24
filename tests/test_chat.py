@@ -1,4 +1,5 @@
 from chat import run_chat
+from order_tools import query_order
 from schemas import IntentResult
 
 
@@ -48,3 +49,20 @@ def test_exit_ends_chat_without_calling_interpreter():
 
     assert state.status == "new"
     assert interpreter.call_count == 0
+
+
+def test_v2_chat_stops_after_order_is_checked():
+    user_messages = iter(["我的耳机左边没声音，想换货", "A1001"])
+    assistant_messages: list[str] = []
+
+    state = run_chat(
+        input_func=lambda: next(user_messages),
+        output_func=assistant_messages.append,
+        interpreter=StubInterpreter(),
+        order_lookup=query_order,
+    )
+
+    assert state.status == "order_checked"
+    assert state.order is not None
+    assert state.order.order_id == "A1001"
+    assert "符合演示换货条件" in assistant_messages[-1]

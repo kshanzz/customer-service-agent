@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from order_tools import OrderRecord
+
 
 class IntentResult(BaseModel):
     intent: Literal[
@@ -21,5 +23,13 @@ class IntentResult(BaseModel):
 
 class ConversationState(BaseModel):
     intent_result: IntentResult | None = None
-    status: Literal["new", "waiting_for_information", "ready"] = "new"
+    status: Literal[
+        "new",
+        "waiting_for_information",
+        "ready",
+        "order_checked",
+        "rejected",
+    ] = "new"
     assistant_message: str | None = None
+    order: OrderRecord | None = None
+    eligibility_reason: str | None = None
