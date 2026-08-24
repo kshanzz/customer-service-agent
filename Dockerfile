@@ -8,7 +8,14 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY api.py ./
+COPY workflow.py ./
+COPY schemas.py ./
+COPY exchange_tools.py ./
+COPY refund_tools.py ./
+COPY order_tools.py ./
+COPY session_store.py ./
+COPY interpreter.py ./
 
 RUN useradd --create-home --uid 10001 --shell /bin/bash appuser
 USER appuser

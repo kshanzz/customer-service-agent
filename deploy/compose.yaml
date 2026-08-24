@@ -1,0 +1,13 @@
+services:
+  api:
+    image: ghcr.io/kshanzz/customer-service-agent:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-8000}:8000"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=128m

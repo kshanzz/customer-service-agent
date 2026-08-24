@@ -1,6 +1,10 @@
 .git
 .venv
 .env
+deploy/
+.github/
+README.md
+requirements-dev.txt
 __pycache__
 .pytest_cache
 tests
