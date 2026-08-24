@@ -19,6 +19,7 @@ class IntentResult(BaseModel):
     product: str | None = None
     reason: str | None = None
     order_id: str | None = None
+    request_kind: Literal["action", "information"] = "action"
 
     missing_information: list[str] = Field(default_factory=list)
 
@@ -44,6 +45,14 @@ def apply_intent_field_rules(intent_result: IntentResult) -> IntentResult:
     )
 
 
+class KnowledgeCitation(BaseModel):
+    citation_id: str
+    title: str
+    version: str
+    section: str
+    source: str
+
+
 class ConversationState(BaseModel):
     intent_result: IntentResult | None = None
     status: Literal[
@@ -63,3 +72,4 @@ class ConversationState(BaseModel):
     pending_action: Literal["exchange", "refund"] | None = None
     exchange_request: ExchangeRequest | None = None
     refund_request: RefundRequest | None = None
+    knowledge_citations: list["KnowledgeCitation"] = Field(default_factory=list)
