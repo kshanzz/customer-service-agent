@@ -1,4 +1,5 @@
 from chat import run_chat
+from exchange_tools import InMemoryExchangeService
 from order_tools import query_order
 from schemas import IntentResult
 
@@ -66,3 +67,25 @@ def test_v2_chat_stops_after_order_is_checked():
     assert state.order is not None
     assert state.order.order_id == "A1001"
     assert "符合演示换货条件" in assistant_messages[-1]
+
+
+def test_v3_chat_waits_for_confirmation_then_completes():
+    user_messages = iter(
+        ["我的耳机左边没声音，想换货", "A1001", "确认"]
+    )
+    assistant_messages: list[str] = []
+    service = InMemoryExchangeService()
+
+    state = run_chat(
+        input_func=lambda: next(user_messages),
+        output_func=assistant_messages.append,
+        interpreter=StubInterpreter(),
+        order_lookup=query_order,
+        exchange_creator=service.create_request,
+    )
+
+    assert state.status == "completed"
+    assert state.exchange_request is not None
+    assert service.request_count == 1
+    assert "是否确认创建换货申请" in assistant_messages[-2]
+    assert "换货申请已创建" in assistant_messages[-1]

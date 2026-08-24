@@ -2,6 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from exchange_tools import ExchangeRequest
 from order_tools import OrderRecord
 
 
@@ -28,8 +29,12 @@ class ConversationState(BaseModel):
         "waiting_for_information",
         "ready",
         "order_checked",
+        "waiting_for_confirmation",
+        "completed",
+        "cancelled",
         "rejected",
     ] = "new"
     assistant_message: str | None = None
     order: OrderRecord | None = None
     eligibility_reason: str | None = None
+    exchange_request: ExchangeRequest | None = None
