@@ -17,6 +17,11 @@ from session_store import InMemorySessionStore
 pytestmark = pytest.mark.anyio
 
 
+@pytest.fixture(autouse=True)
+def _clear_agent_db_path(monkeypatch):
+    monkeypatch.delenv("AGENT_DB_PATH", raising=False)
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"

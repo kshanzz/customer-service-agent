@@ -11,3 +11,8 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,nosuid,nodev,noexec,size=128m
+    volumes:
+      - agent-data:/data
+
+volumes:
+  agent-data:
