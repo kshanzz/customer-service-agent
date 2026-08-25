@@ -4,6 +4,29 @@
 V10 引入了 SQLite 持久化：会话状态与售后幂等记录可落库，容器重启和镜像更新后不会清空状态（当 `AGENT_DB_PATH` 配置到可持久化目录时）。
 V11 增加了“确定性对话评测”与“脱敏运行追踪”：请求会经过 tracing 管道记录每一轮工具/状态迁移，且仅输出结构化日志，不落库。
 
+## V14A 订单查询 Provider
+
+订单查询默认继续使用 V0–V13B 的进程内 `order_lookup`。只有显式设置
+`AGENT_ORDER_PROVIDER=http` 才会创建只读 HTTP Provider；换货、退款创建仍然使用
+现有的内存/SQLite 确定性服务，不会被远程写入替代。
+
+HTTP Provider 使用固定的 `GET {AGENT_ORDER_API_BASE_URL}/orders/{order_id}`，带有
+`Authorization: Bearer ...` 和 `Accept: application/json`。订单号仍必须是项目现有的
+单字母加四位数字格式，用户输入不能改变目标 URL。生产上游必须使用 HTTPS；HTTP 仅允许
+`localhost` 或 `127.0.0.1`，用于本地测试。API token 只通过运行时环境变量注入，不写入
+镜像、日志、trace 或响应。
+
+可配置项：
+
+- `AGENT_ORDER_API_BASE_URL`、`AGENT_ORDER_API_TOKEN`：HTTP 模式必填；URL 不得带用户信息、query 或 fragment。
+- `AGENT_ORDER_CONNECT_TIMEOUT_SECONDS`、`AGENT_ORDER_READ_TIMEOUT_SECONDS`：连接和读取超时。
+- `AGENT_ORDER_MAX_ATTEMPTS`：总尝试次数，严格限制为 1–3；只对临时网络错误、408、429 和 5xx 查询重试，并使用有上限的指数退避。
+- `AGENT_ORDER_CIRCUIT_FAILURE_THRESHOLD`、`AGENT_ORDER_CIRCUIT_COOLDOWN_SECONDS`：熔断阈值和冷却时间。
+
+熔断器状态为 `CLOSED`、`OPEN`、`HALF_OPEN`：达到临时失败阈值后快速失败，冷却后只放行一个探测请求，探测成功恢复，失败重新打开。熔断状态只存在于单个进程/Provider 实例内，不跨 worker、容器或副本共享。`/health` 不访问订单上游。
+
+HTTP 200 映射为现有 `OrderRecord`，404 映射为未找到；400、401、403 和非法上游响应不重试，分别作为安全的上游错误返回。临时不可用返回安全 503，协议错误返回安全 502；客户端不会看到上游正文或内部 URL。查询失败时会话状态不会保存变化。
+
 ## V10 持久化说明
 
 会话与换货/退款申请在以下条件下持久化：
@@ -124,6 +147,7 @@ docker pull ghcr.io/<owner>/<repo>:<tag>
 - PR：自动运行测试，并验证 Docker 镜像可构建，但不推送。
 - `main` 分支推送与 `v*` 标签推送：测试通过后构建并推送镜像到 GHCR。
 - 目前仅提供 **Continuous Delivery 到镜像仓库**，不包含自动部署到具体服务器。
+- CI 显式设置 `AGENT_ORDER_PROVIDER=memory`，测试与镜像 smoke test 不使用真实订单 token，也不访问外部订单系统。
 
 ## 会话与安全边界
 

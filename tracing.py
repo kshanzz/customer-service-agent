@@ -160,11 +160,20 @@ def run_traced_message(
             try:
                 result = order_lookup(order_id)
             except Exception as exc:
+                outcome = getattr(exc, "trace_outcome", "upstream_error")
+                if outcome not in {
+                    "success",
+                    "not_found",
+                    "timeout",
+                    "upstream_error",
+                    "circuit_open",
+                }:
+                    outcome = "upstream_error"
                 events.append(
                     TraceEvent(
                         event_type="tool_call",
                         component="order_lookup",
-                        outcome=f"error:{type(exc).__name__}",
+                        outcome=outcome,
                     )
                 )
                 raise
@@ -173,7 +182,7 @@ def run_traced_message(
                     TraceEvent(
                         event_type="tool_call",
                         component="order_lookup",
-                        outcome="success",
+                        outcome="success" if result is not None else "not_found",
                     )
                 )
                 return result
