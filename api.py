@@ -11,6 +11,11 @@ from pydantic import BaseModel, StringConstraints
 from exchange_tools import ExchangeRequest, InMemoryExchangeService
 from interpreter import interpret_intent
 from order_tools import OrderRecord, query_order
+from http_order_provider import (
+    HttpOrderProvider,
+    OrderProviderError,
+    OrderProviderSettings,
+)
 from refund_tools import InMemoryRefundService, RefundRequest
 from schemas import ConversationState, IntentResult, KnowledgeCitation
 from session_store import (
@@ -120,6 +125,7 @@ def create_app(
     cors_origins: str | list[str] | None = None,
     knowledge_search: KnowledgeSearch | None = None,
     knowledge_answerer: KnowledgeAnswerer | None = None,
+    order_provider: OrderLookup | None = None,
 ) -> FastAPI:
     """Create an API with isolated app-level services and injectable tools."""
     resolved_auth_required, resolved_api_key, resolved_docs_enabled, resolved_cors_origins = (
@@ -131,7 +137,20 @@ def create_app(
         )
     )
     resolved_interpreter = interpreter if interpreter is not None else interpret_intent
-    resolved_order_lookup = order_lookup if order_lookup is not None else query_order
+    managed_order_provider: HttpOrderProvider | None = None
+    if order_lookup is not None:
+        resolved_order_lookup = order_lookup
+    elif order_provider is not None:
+        resolved_order_lookup = order_provider
+        if isinstance(order_provider, HttpOrderProvider):
+            managed_order_provider = order_provider
+    else:
+        order_settings = OrderProviderSettings.from_env()
+        if order_settings.provider == "http":
+            managed_order_provider = HttpOrderProvider.from_env()
+            resolved_order_lookup = managed_order_provider
+        else:
+            resolved_order_lookup = query_order
 
     db_path = os.getenv("AGENT_DB_PATH")
     knowledge_enabled = os.getenv("AGENT_KNOWLEDGE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
@@ -195,18 +214,22 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        _ensure_sqlite_resources()
-        if knowledge_enabled:
-            if not db_path:
-                knowledge_error[0] = RuntimeError("AGENT_DB_PATH is required when knowledge is enabled")
-            elif knowledge_runtime["search"] is None:
-                try:
-                    service = KnowledgeSearchService(db_path, knowledge_dir)
-                    service.initialize_and_sync()
-                    knowledge_runtime["search"] = service.search
-                except Exception as exc:
-                    knowledge_error[0] = exc
-        yield
+        try:
+            _ensure_sqlite_resources()
+            if knowledge_enabled:
+                if not db_path:
+                    knowledge_error[0] = RuntimeError("AGENT_DB_PATH is required when knowledge is enabled")
+                elif knowledge_runtime["search"] is None:
+                    try:
+                        service = KnowledgeSearchService(db_path, knowledge_dir)
+                        service.initialize_and_sync()
+                        knowledge_runtime["search"] = service.search
+                    except Exception as exc:
+                        knowledge_error[0] = exc
+            yield
+        finally:
+            if managed_order_provider is not None:
+                managed_order_provider.close()
 
     app = FastAPI(
         title="Customer Service Agent API",
@@ -331,6 +354,15 @@ def create_app(
                     knowledge_search=resolved_knowledge_search,
                     knowledge_answerer=resolved_knowledge_answerer,
                 )
+            except OrderProviderError as exc:
+                raise HTTPException(
+                    status_code=exc.http_status,
+                    detail=(
+                        "Order service is temporarily unavailable"
+                        if exc.http_status == 503
+                        else "Order service returned an invalid response"
+                    ),
+                ) from None
             except Exception:
                 raise HTTPException(
                     status_code=503,

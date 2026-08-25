@@ -16,6 +16,7 @@ COPY schemas.py ./
 COPY exchange_tools.py ./
 COPY refund_tools.py ./
 COPY order_tools.py ./
+COPY http_order_provider.py ./
 COPY session_store.py ./
 COPY interpreter.py ./
 COPY sqlite_store.py ./

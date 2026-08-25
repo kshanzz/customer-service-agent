@@ -36,6 +36,8 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Run tests
+        env:
+          AGENT_ORDER_PROVIDER: memory
         run: pytest -q
       - name: Run deterministic tracing evals
         run: python -m evals.run
@@ -60,6 +62,10 @@ jobs:
           fi
           if ! grep -q "^COPY auth.py ./" Dockerfile; then
             echo "Dockerfile missing expected COPY auth.py ./" >&2
+            exit 1
+          fi
+          if ! grep -q "^COPY http_order_provider.py ./" Dockerfile; then
+            echo "Dockerfile missing expected COPY http_order_provider.py ./" >&2
             exit 1
           fi
 
@@ -88,6 +94,7 @@ jobs:
             -e AGENT_DB_PATH=/tmp/knowledge-ci.db \
             -e AGENT_KNOWLEDGE_ENABLED=true \
             -e AGENT_KNOWLEDGE_DIR=/app/knowledge_docs \
+            -e AGENT_ORDER_PROVIDER=memory \
             customer-service-agent:test
           trap 'docker logs "${CONTAINER_NAME}" >&2 || true; docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true' EXIT
           for i in $(seq 1 15); do
